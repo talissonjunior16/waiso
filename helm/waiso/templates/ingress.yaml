@@ -1,0 +1,64 @@
+{{- if .Values.ingress.enabled }}
+{{/*
+The web app, the API and the editor service, each on its own host. Workers are
+never dialled, so nothing routes to them.
+*/}}
+{{- $full := include "waiso.fullname" . }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $full }}
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+  {{- with .Values.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.hosts.ui | quote }}
+        - {{ .Values.ingress.hosts.api | quote }}
+        {{- if .Values.lsp.enabled }}
+        - {{ .Values.ingress.hosts.lsp | quote }}
+        {{- end }}
+      secretName: {{ .Values.ingress.tls.secretName | default (printf "%s-tls" $full) }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.hosts.ui | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $full }}-ui
+                port:
+                  number: {{ .Values.ui.service.port }}
+    - host: {{ .Values.ingress.hosts.api | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $full }}-api
+                port:
+                  number: {{ .Values.api.service.port }}
+    {{- if .Values.lsp.enabled }}
+    - host: {{ .Values.ingress.hosts.lsp | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $full }}-lsp
+                port:
+                  number: {{ .Values.lsp.service.port }}
+    {{- end }}
+{{- end }}

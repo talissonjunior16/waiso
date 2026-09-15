@@ -1,0 +1,28 @@
+apiVersion: v2
+name: waiso
+description: Waiso — run Python, TypeScript, JavaScript, C and C++ on your own infrastructure.
+type: application
+
+# The chart's own version. Bump on any chart change.
+version: 1.0.0
+
+# The Waiso release this chart defaults to. Every image tag falls back to this,
+# so an upgrade is one value: `--set global.imageTag=1.2.0`.
+appVersion: "1.0.0"
+
+home: https://waiso.com.br
+sources:
+  - https://github.com/talissonjunior16/waiso
+
+keywords:
+  - waiso
+  - automation
+  - scripts
+  - workflows
+
+maintainers:
+  - name: Waiso
+
+annotations:
+  # PostgreSQL is not a dependency: point the chart at the database you run.
+  waiso.com.br/requires: "PostgreSQL 14+ reachable from the cluster"

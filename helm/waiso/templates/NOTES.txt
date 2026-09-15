@@ -1,0 +1,75 @@
+Waiso {{ .Chart.AppVersion }} is installing.
+
+{{- if not (or .Values.postgres.existingSecret .Values.postgres.url) }}
+
+  ✗ NO DATABASE CONFIGURED. The pods will not start.
+
+    kubectl create secret generic waiso-db \
+      --from-literal=DATABASE_URL='postgres://user:pass@host:5432/waiso'
+    helm upgrade {{ .Release.Name }} ... --set postgres.existingSecret=waiso-db
+{{- end }}
+{{- if not (or .Values.credentials.existingSecret .Values.credentials.dbCredentialsKey) }}
+
+  ✗ NO CREDENTIALS SECRET. The pods will not start.
+
+    kubectl create secret generic waiso-secrets \
+      --from-literal=DB_CREDENTIALS_KEY="$(openssl rand -base64 32)" \
+      --from-literal=SCRAPER_ENGINE_SECRET="$(openssl rand -hex 32)"
+    helm upgrade {{ .Release.Name }} ... --set credentials.existingSecret=waiso-secrets
+
+    Back DB_CREDENTIALS_KEY up somewhere OUTSIDE the cluster: it encrypts every
+    secret stored in the database, and without it they cannot be recovered.
+{{- end }}
+{{- if or .Values.postgres.url .Values.credentials.dbCredentialsKey .Values.credentials.scraperEngineSecret }}
+
+  ! A secret was passed inline and is now readable via
+    `helm get values {{ .Release.Name }}`. Move it to an existing Secret before
+    this install carries anything real.
+{{- end }}
+
+Open it:
+{{- if .Values.ingress.enabled }}
+  {{ include "waiso.publicUrl" (dict "ctx" $ "svc" "ui" "scheme" "http" "port" .Values.ui.service.port) }}
+
+  Each host needs a DNS record pointing at your ingress controller's external
+  address (kubectl get ingress {{ include "waiso.fullname" . }}):
+    {{ .Values.ingress.hosts.ui }}  — the web app
+    {{ .Values.ingress.hosts.api }}  — the API
+{{- if .Values.lsp.enabled }}
+    {{ .Values.ingress.hosts.lsp }}  — the editor service (WebSocket)
+{{- end }}
+{{- if not .Values.ingress.tls.enabled }}
+
+  ! TLS is off: browsers reach these over plain HTTP. Set ingress.tls.enabled=true.
+{{- end }}
+{{- else }}
+  kubectl port-forward svc/{{ include "waiso.fullname" . }}-ui 8080:{{ .Values.ui.service.port }}
+  kubectl port-forward svc/{{ include "waiso.fullname" . }}-api 3000:{{ .Values.api.service.port }}
+  open http://localhost:8080
+{{- end }}
+
+The first account created on an empty database becomes the Admin.
+
+Licensing: a new instance runs fully for 14 days. After that it needs a license —
+apply the license token and check-in key in Settings → License. A licensed
+instance checks in with https://api.waiso.com.br every hour, so it needs outbound
+HTTPS; after 2 days without a successful check-in it enters grace mode:
+everything stays readable, but nothing new runs until it checks in again.
+Enterprise can be licensed offline instead.
+
+Workers: {{ .Values.worker.replicaCount }} replica(s) × {{ .Values.worker.concurrency }} jobs each
+{{- if .Values.sqlWorker.enabled }} · SQL worker × {{ .Values.sqlWorker.concurrency }}{{ end }}
+{{- if eq .Values.worker.isolationLevel "none" }}
+
+  ! isolationLevel=none — scripts run as ordinary processes, isolated by the
+    container alone. Only appropriate when you trust everyone who can write a
+    script here.
+{{- else if not .Values.worker.appArmorProfile }}
+
+  ! No AppArmor profile for the worker. On nodes that enforce AppArmor (Ubuntu,
+    Container-Optimized OS, SUSE) every Python, C and C++ run will fail: load the
+    waiso-worker profile on those nodes and set worker.appArmorProfile=waiso-worker.
+    The worker logs "sandbox cannot start a program" at startup when this applies.
+{{- end }}
+
+Docs: https://waiso.com.br/docs/self-host

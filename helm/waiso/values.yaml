@@ -1,0 +1,225 @@
+# Waiso — Helm values.
+#
+# Two things you MUST set: the database connection and the credentials secret.
+# Everything else has a working default.
+#
+#   helm install waiso oci://ghcr.io/talissonjunior16/charts/waiso \
+#     --set postgres.existingSecret=waiso-db \
+#     --set credentials.existingSecret=waiso-secrets
+#
+# PostgreSQL is not bundled: point this at the database you already run.
+
+global:
+  # One tag for every image, so an upgrade is a single value. A per-service
+  # `image.tag` overrides it when you need to pin one component.
+  imageTag: ""            # defaults to .Chart.AppVersion
+  imageRegistry: ghcr.io
+  imageRepository: talissonjunior16/waiso
+  imagePullPolicy: IfNotPresent
+  imagePullSecrets: []
+
+# ── Public addresses ────────────────────────────────────────────────────────
+# Where your users' browsers reach the web app, the API and the editor service.
+# With ingress enabled each defaults to http(s)://<its ingress host>; set them
+# when you expose the services some other way.
+publicUrls:
+  ui: ""
+  api: ""
+  lsp: ""
+
+# ── Database ────────────────────────────────────────────────────────────────
+# Prefer `existingSecret`: a connection string in values ends up in
+# `helm get values`, in CI logs, and wherever the values file is stored.
+postgres:
+  # A Secret with a DATABASE_URL key:
+  #   kubectl create secret generic waiso-db \
+  #     --from-literal=DATABASE_URL='postgres://user:pass@host:5432/waiso'
+  existingSecret: ""
+  existingSecretKey: DATABASE_URL
+  # Evaluation only — inline, and therefore visible.
+  url: ""
+
+# ── Secrets ─────────────────────────────────────────────────────────────────
+credentials:
+  # A Secret carrying two keys:
+  #   DB_CREDENTIALS_KEY     openssl rand -base64 32
+  #     Encrypts every secret stored in the database, such as integration
+  #     credentials. LOSING IT MEANS LOSING THEM. Back it up
+  #     somewhere other than the cluster.
+  #   SCRAPER_ENGINE_SECRET  openssl rand -hex 32
+  #     Authenticates the scraper engine to the API.
+  existingSecret: ""
+  existingSecretKey: DB_CREDENTIALS_KEY
+  scraperSecretKey: SCRAPER_ENGINE_SECRET
+  # Evaluation only. Leave empty and use existingSecret in production.
+  dbCredentialsKey: ""
+  scraperEngineSecret: ""
+
+# ── Web app ─────────────────────────────────────────────────────────────────
+ui:
+  replicaCount: 2
+  image:
+    repository: ""        # defaults to <global.imageRepository>-ui
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 500m, memory: 256Mi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── API ─────────────────────────────────────────────────────────────────────
+api:
+  replicaCount: 2
+  image:
+    repository: ""        # defaults to <global.imageRepository>-api
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  # Extra environment variables for the API.
+  env: {}
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Worker (Python / TypeScript / JavaScript / C / C++) ─────────────────────
+worker:
+  replicaCount: 3
+  image:
+    repository: ""        # defaults to <global.imageRepository>-worker
+    tag: ""
+  # Jobs one replica runs at once.
+  concurrency: 12
+  # Restrict what this pool picks up. Empty = every language.
+  languages: ""
+  memLimitMb: 2048
+  # `sandbox` isolates every run. It needs SYS_ADMIN, NET_ADMIN and an
+  # unconfined seccomp profile, which namespaces enforcing PodSecurity
+  # "restricted" refuse. `none` runs scripts as ordinary processes isolated by
+  # the container alone — only when you trust everyone who can write a script.
+  isolationLevel: sandbox
+  # On nodes that enforce AppArmor (Ubuntu, Container-Optimized OS, SUSE) the
+  # runtime's default profile forbids the mounts the sandbox makes, and every
+  # Python, C and C++ run fails. Load the waiso-worker profile (apparmor/ in the
+  # deployment repository) on those nodes, then set this to `waiso-worker`.
+  # Needs Kubernetes 1.30+. Empty keeps the runtime default.
+  appArmorProfile: ""
+  resources:
+    requests: { cpu: "1",  memory: 1Gi }
+    limits:   { cpu: "4",  memory: 2Gi }
+  # Compiled C/C++ binaries are cached here. A ReadWriteMany claim shares the
+  # cache across replicas; without one each replica keeps its own.
+  nativeCache:
+    enabled: true
+    existingClaim: ""
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── SQL worker (PostgreSQL / MySQL) ─────────────────────────────────────────
+sqlWorker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ""        # defaults to <global.imageRepository>-worker-sql
+    tag: ""
+  # Concurrent queries against YOUR databases — size it for that server.
+  concurrency: 6
+  resources:
+    requests: { cpu: 250m, memory: 256Mi }
+    limits:   { cpu: "2",  memory: 1Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Image worker ────────────────────────────────────────────────────────────
+imageWorker:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ""        # defaults to <global.imageRepository>-worker-image
+    tag: ""
+  resources:
+    requests: { cpu: 250m, memory: 512Mi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Scraper engine (AI Scrapers) ────────────────────────────────────────────
+scraperEngine:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ""        # defaults to <global.imageRepository>-scraper-engine
+    tag: ""
+  # Shared memory for the headless browser.
+  shmSize: 1Gi
+  resources:
+    requests: { cpu: 500m, memory: 1Gi }
+    limits:   { cpu: "2",  memory: 2Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Editor service (completions and diagnostics) ────────────────────────────
+lsp:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ""        # defaults to <global.imageRepository>-lsp
+    tag: ""
+  service:
+    type: ClusterIP
+    port: 3001
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: "1",  memory: 1Gi }
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+
+# ── Ingress ─────────────────────────────────────────────────────────────────
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    ui: waiso.example.com
+    api: api.waiso.example.com
+    # The editor service speaks WebSocket. Most controllers pass it through;
+    # some need an annotation for it.
+    lsp: lsp.waiso.example.com
+  tls:
+    enabled: false
+    secretName: ""
+
+# Name overrides, the usual Helm escape hatches.
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Applied to the pods whose images run as uid 1000. The worker sets what its
+# sandbox needs itself.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000

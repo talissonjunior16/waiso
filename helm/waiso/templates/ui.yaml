@@ -1,0 +1,68 @@
+{{/*
+The web app: static files. It calls the API and the editor service at their
+public addresses, which it is given at start.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "waiso.fullname" . }}-ui
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  replicas: {{ .Values.ui.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "waiso.selector" (dict "ctx" $ "component" "ui") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "waiso.selector" (dict "ctx" $ "component" "ui") | nindent 8 }}
+      {{- with .Values.ui.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "waiso.serviceAccountName" . }}
+      {{- include "waiso.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: ui
+          image: {{ include "waiso.image" (dict "ctx" $ "component" "ui" "svc" .Values.ui) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: WAISO_PUBLIC_API_URL
+              value: {{ include "waiso.publicUrl" (dict "ctx" $ "svc" "api" "scheme" "http" "port" .Values.api.service.port) | quote }}
+            - name: WAISO_PUBLIC_LSP_URL
+              value: {{ include "waiso.publicUrl" (dict "ctx" $ "svc" "lsp" "scheme" "ws" "port" .Values.lsp.service.port) | quote }}
+          readinessProbe:
+            httpGet: { path: /, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /, port: http }
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.ui.resources | nindent 12 }}
+      {{- include "waiso.scheduling" .Values.ui | nindent 6 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "waiso.fullname" . }}-ui
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ui
+spec:
+  type: {{ .Values.ui.service.type }}
+  ports:
+    - port: {{ .Values.ui.service.port }}
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "waiso.selector" (dict "ctx" $ "component" "ui") | nindent 4 }}

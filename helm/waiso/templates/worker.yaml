@@ -1,0 +1,81 @@
+{{/*
+The worker runs your scripts. With isolationLevel "sandbox" (the default) its pod
+needs extra capabilities, which a namespace enforcing PodSecurity "restricted"
+refuses — see values.yaml. It has no Service: nothing ever dials a worker.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "waiso.fullname" . }}-worker
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "waiso.selector" (dict "ctx" $ "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "waiso.selector" (dict "ctx" $ "component" "worker") | nindent 8 }}
+      {{- with .Values.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "waiso.serviceAccountName" . }}
+      {{- include "waiso.imagePullSecrets" . | nindent 6 }}
+      # Lets an in-flight script finish before the pod goes.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: {{ include "waiso.image" (dict "ctx" $ "component" "worker" "svc" .Values.worker) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            {{- include "waiso.commonEnv" . | nindent 12 }}
+            - name: WORKER_POOL
+              value: default
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
+            - name: WORKER_LANGUAGES
+              value: {{ .Values.worker.languages | quote }}
+            # Keep in step with the container memory limit.
+            - name: MEM_LIMIT_MB
+              value: {{ .Values.worker.memLimitMb | quote }}
+            - name: ISOLATION_LEVEL
+              value: {{ .Values.worker.isolationLevel | quote }}
+            {{- if .Values.worker.nativeCache.enabled }}
+            - name: WAISO_NATIVE_CACHE_DIR
+              value: /var/cache/waiso/native
+            {{- end }}
+          {{- if ne .Values.worker.isolationLevel "none" }}
+          securityContext:
+            capabilities:
+              add: [SYS_ADMIN, NET_ADMIN]
+            seccompProfile:
+              type: Unconfined
+            {{- with .Values.worker.appArmorProfile }}
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- if .Values.worker.nativeCache.enabled }}
+          volumeMounts:
+            - name: native-cache
+              mountPath: /var/cache/waiso/native
+          {{- end }}
+      {{- if .Values.worker.nativeCache.enabled }}
+      volumes:
+        - name: native-cache
+          {{- if .Values.worker.nativeCache.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.worker.nativeCache.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- end }}
+      {{- include "waiso.scheduling" .Values.worker | nindent 6 }}

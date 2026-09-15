@@ -1,0 +1,43 @@
+{{- if .Values.sqlWorker.enabled }}
+{{/*
+The SQL worker connects to YOUR databases, so it needs outbound egress. A
+default-deny NetworkPolicy has to allow it, or every connection test times out.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "waiso.fullname" . }}-sql-worker
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: sql-worker
+spec:
+  replicas: {{ .Values.sqlWorker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "waiso.selector" (dict "ctx" $ "component" "sql-worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "waiso.selector" (dict "ctx" $ "component" "sql-worker") | nindent 8 }}
+      {{- with .Values.sqlWorker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "waiso.serviceAccountName" . }}
+      {{- include "waiso.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: sql-worker
+          image: {{ include "waiso.image" (dict "ctx" $ "component" "worker-sql" "svc" .Values.sqlWorker) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            {{- include "waiso.commonEnv" . | nindent 12 }}
+            - name: SQL_WORKER_CONCURRENCY
+              value: {{ .Values.sqlWorker.concurrency | quote }}
+          resources:
+            {{- toYaml .Values.sqlWorker.resources | nindent 12 }}
+      {{- include "waiso.scheduling" .Values.sqlWorker | nindent 6 }}
+{{- end }}

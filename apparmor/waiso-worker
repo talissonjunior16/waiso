@@ -1,0 +1,85 @@
+# AppArmor profile for the Waiso worker (Python, TypeScript, JavaScript, C, C++).
+#
+# WHEN YOU NEED IT: on a host that enforces AppArmor — Ubuntu, Debian, SUSE;
+# check with `cat /sys/module/apparmor/parameters/enabled` (Y means yes). There,
+# Docker's default profile forbids every mount, and the sandbox that isolates
+# each run builds that run's filesystem with mounts: without this profile every
+# Python, C and C++ run fails before it starts.
+#
+# INSTALL (once per host, survives reboots):
+#
+#   sudo install -m 0644 apparmor/waiso-worker /etc/apparmor.d/waiso-worker
+#   sudo apparmor_parser -r -W /etc/apparmor.d/waiso-worker
+#
+# The compose file runs the worker with it (WORKER_APPARMOR_PROFILE in .env).
+# On hosts without AppArmor the setting is ignored and nothing needs installing.
+#
+# WHAT IT IS: Docker's own default profile, with `deny mount` replaced by only
+# the mounts the sandbox makes. Every other rule is Docker's, including the
+# /proc and /sys write denials. A container using it cannot mount anything else.
+
+abi <abi/4.0>,
+
+#include <tunables/global>
+
+profile waiso-worker flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  network,
+  capability,
+  file,
+  umount,
+  # Host (privileged) processes may send signals to container processes.
+  signal (receive) peer=unconfined,
+  # runc and crun may send signals to container processes ("docker stop").
+  signal (receive) peer=runc,
+  signal (receive) peer=crun,
+  # Container processes may send signals amongst themselves.
+  signal (send,receive) peer=waiso-worker,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9],[^1-9][^0-9],[^1-9s][^0-9y][^0-9s],[^1-9][^0-9][^0-9][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  # Docker's default has `deny mount,` here. The sandbox builds each run's
+  # filesystem under /tmp/nsjail.<uid>.root and pivots into it; these are the
+  # only mounts it makes and the only ones allowed.
+  mount options=(rw, rprivate) -> /,
+  mount fstype=tmpfs -> /tmp/nsjail.*.root/,
+  mount fstype=tmpfs -> /tmp/nsjail.*.tmp/,
+  mount fstype=tmpfs -> /tmp/nsjail.*.root/tmp/,
+  mount fstype=proc -> /tmp/nsjail.*.root/proc/,
+  mount options=(rw, rbind) /usr/{,bin/,lib/,lib64/} -> /tmp/nsjail.*.root/{usr,bin,lib,lib64}/,
+  mount options=(rw, rbind) /app/ -> /tmp/nsjail.*.root/app/,
+  mount options=(rw, rbind) /etc/resolv.conf -> /tmp/nsjail.*.root/etc/resolv.conf,
+  mount options=(rw, rbind) /tmp/waiso_job_*/ -> /tmp/nsjail.*.root/tmp/waiso_job_*/,
+  remount /tmp/nsjail.*.root/{,**},
+  pivot_root /tmp/nsjail.*.root/,
+  # After pivot_root the same mounts are seen from inside the run's root, and
+  # the sandbox makes them read-only. The `ro` flag is required here, so nothing
+  # can be remounted writable.
+  remount options=(ro, remount, bind, relatime) /,
+  remount options=(ro, remount, bind, relatime) /{bin,lib,lib64,usr,app}/,
+  remount options=(ro, remount, bind, relatime) /etc/resolv.conf,
+  remount options=(ro, remount, bind, relatime) /proc/,
+  # The two mounts a run may write to, and only those: its scratch /tmp and its
+  # own job folder.
+  remount options=(rw, remount, bind, relatime) /tmp/,
+  remount options=(rw, remount, bind, relatime) /tmp/waiso_job_*/,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # suppress ptrace denials when using 'ps' inside a container
+  ptrace (trace,read,tracedby,readby) peer=waiso-worker,
+}
