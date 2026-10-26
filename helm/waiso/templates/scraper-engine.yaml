@@ -1,0 +1,53 @@
+{{- if .Values.scraperEngine.enabled }}
+{{/*
+Runs AI Scrapers in a headless browser. It needs outbound egress to the sites it
+visits, and shared memory for the browser.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "waiso.fullname" . }}-scraper-engine
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: scraper-engine
+spec:
+  replicas: {{ .Values.scraperEngine.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "waiso.selector" (dict "ctx" $ "component" "scraper-engine") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "waiso.selector" (dict "ctx" $ "component" "scraper-engine") | nindent 8 }}
+      {{- with .Values.scraperEngine.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "waiso.serviceAccountName" . }}
+      {{- include "waiso.imagePullSecrets" . | nindent 6 }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: scraper-engine
+          image: {{ include "waiso.image" (dict "ctx" $ "component" "scraper-engine" "svc" .Values.scraperEngine) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            {{- include "waiso.commonEnv" . | nindent 12 }}
+            {{- include "waiso.scraperSecretEnv" . | nindent 12 }}
+            - name: SCRAPER_CHROMIUM_PATH
+              value: /usr/bin/chromium
+            - name: WAISO_API_URL
+              value: {{ printf "http://%s-api:%v" (include "waiso.fullname" .) .Values.api.service.port | quote }}
+          volumeMounts:
+            - name: dshm
+              mountPath: /dev/shm
+          resources:
+            {{- toYaml .Values.scraperEngine.resources | nindent 12 }}
+      volumes:
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: {{ .Values.scraperEngine.shmSize }}
+      {{- include "waiso.scheduling" .Values.scraperEngine | nindent 6 }}
+{{- end }}
