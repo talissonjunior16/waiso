@@ -1,0 +1,175 @@
+# Waiso — self-hosted.
+#
+# Every service pulls a published image, so this file and .env are all you need.
+#
+#   cp .env.example .env     # fill in the three required values
+#   docker compose up -d
+#   open http://localhost:8080
+#
+# The first account created on an empty database becomes the Admin.
+
+services:
+  # ─── Database ────────────────────────────────────────────────────────────────
+  # The only stateful piece. To use a managed PostgreSQL instead, delete this
+  # service and set DATABASE_URL in .env — migrations run on startup either way.
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-waiso}
+      POSTGRES_USER: ${POSTGRES_USER:-waiso}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-waiso} -d ${POSTGRES_DB:-waiso}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    # On every network: each worker lives on only one of them, and all of them
+    # need the database.
+    networks: [core, sandbox, integrations]
+
+  # ─── Web app ─────────────────────────────────────────────────────────────────
+  # What your users open in the browser. It calls the API and the editor service
+  # at the PUBLIC addresses below, so set them to wherever browsers reach them.
+  ui:
+    image: ghcr.io/talissonjunior16/waiso-ui:${WAISO_VERSION:-1.3.6}
+    restart: unless-stopped
+    environment:
+      WAISO_PUBLIC_API_URL: ${WAISO_PUBLIC_API_URL:-http://localhost:3000}
+      WAISO_PUBLIC_LSP_URL: ${WAISO_PUBLIC_LSP_URL:-ws://localhost:3001}
+      # This address is the one customers and third parties use (MCP clients,
+      # /exec calls, approval links, company sign-in): it forwards them to the API.
+      WAISO_INTERNAL_API_URL: http://api:3000
+    ports:
+      - "${WAISO_UI_PORT:-8080}:8080"
+    depends_on: [api]
+    networks: [core]
+
+  # ─── API ─────────────────────────────────────────────────────────────────────
+  api:
+    image: ghcr.io/talissonjunior16/waiso-api:${WAISO_VERSION:-1.3.6}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso}
+      PORT: 3000
+      # The release this install runs (reported with the licence check-in).
+      WAISO_VERSION: ${WAISO_VERSION:-1.3.6}
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY in .env}
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET in .env}
+      # Where links in emails and sign-in redirects send people.
+      FRONTEND_URL: ${WAISO_PUBLIC_UI_URL:-http://localhost:8080}
+      # The editor service's public address, for the Waiso Desk's editor.
+      WAISO_PUBLIC_LSP_URL: ${WAISO_PUBLIC_LSP_URL:-ws://localhost:3001}
+      # The API's own public address (the Google connection callback).
+      WAISO_PUBLIC_API_URL: ${WAISO_PUBLIC_API_URL:-http://localhost:3000}
+      # "Sign in with GitHub": your own GitHub OAuth App (empty = no button).
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+    ports:
+      - "${WAISO_API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [core]
+
+  # ─── Worker ──────────────────────────────────────────────────────────────────
+  # Runs Python, TypeScript, JavaScript, C and C++. Scale it with
+  # `--scale worker=N`, or run more on other machines with the same .env and a
+  # route to the database. A worker needs no inbound port.
+  worker:
+    image: ghcr.io/talissonjunior16/waiso-worker:${WAISO_VERSION:-1.3.6}
+    restart: unless-stopped
+    # Reaps finished child processes; without it the container runs out of pids.
+    init: true
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso}
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY in .env}
+      WORKER_POOL: default
+      # The public addresses approval links (waiso.resume_urls) point at.
+      WAISO_PUBLIC_API_URL: ${WAISO_PUBLIC_API_URL:-http://localhost:3000}
+      FRONTEND_URL: ${WAISO_PUBLIC_UI_URL:-http://localhost:8080}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-12}
+      MEM_LIMIT_MB: ${WORKER_MEM_LIMIT_MB:-2048}
+      ISOLATION_LEVEL: ${ISOLATION_LEVEL:-sandbox}
+      WAISO_NATIVE_CACHE_DIR: /var/cache/waiso/native
+      # SQL scripts and the database workbench run in each worker, in their own
+      # slots. Concurrent queries against YOUR databases — size it for that server.
+      WORKER_SQL_CONCURRENCY: ${WORKER_SQL_CONCURRENCY:-4}
+      # Warm connections per database connection per worker.
+      SQL_POOL_MAX_PER_INTEGRATION: ${SQL_POOL_MAX_PER_INTEGRATION:-4}
+      # Private database hosts a connection may reach (exact names, comma list).
+      SQL_ALLOW_PRIVATE_HOSTS: ${SQL_ALLOW_PRIVATE_HOSTS:-}
+      # Databases on a private network (SSH, Tailscale, WireGuard, proxy): at
+      # most this many tunnels open per worker; the least recently used idle one
+      # closes to make room. They need no extra capability, but WireGuard and
+      # Tailscale need outbound UDP from the worker.
+      SQL_WORKER_MAX_TUNNELS: ${SQL_WORKER_MAX_TUNNELS:-12}
+      # Private SMTP / S3 hosts the worker may reach (exact names, comma list).
+      OUTBOUND_ALLOW_PRIVATE_HOSTS: ${OUTBOUND_ALLOW_PRIVATE_HOSTS:-}
+      # The AI step in a flow asks the API for the model call.
+      WAISO_API_URL: http://api:3000
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - native_cache:/var/cache/waiso/native
+    # The per-run sandbox needs these. Removing them means running scripts
+    # without it — see ISOLATION_LEVEL in .env.example.
+    #
+    # On hosts that enforce AppArmor (Ubuntu, Debian, SUSE) install the profile
+    # in apparmor/ first — one command, see the README. Without it the worker does
+    # not start and says why. On hosts without AppArmor this is ignored.
+    cap_add: [SYS_ADMIN, NET_ADMIN]
+    security_opt: ["seccomp=unconfined", "apparmor=${WORKER_APPARMOR_PROFILE:-waiso-worker}"]
+    mem_limit: ${WORKER_MEM_LIMIT:-2g}
+    pids_limit: 512
+    # sandbox: postgres. integrations: the worker's own outbound connections
+    # (your databases, e-mail, S3). Scripts never get it: each runs in the
+    # sandbox with no network at all (keep ISOLATION_LEVEL=sandbox).
+    networks: [sandbox, integrations]
+
+  # ─── Scraper engine ──────────────────────────────────────────────────────────
+  # Runs AI Scrapers in a headless browser. Leave it out
+  # (`--scale scraper-engine=0`) if you do not use them.
+  scraper-engine:
+    image: ghcr.io/talissonjunior16/waiso-scraper-engine:${WAISO_VERSION:-1.3.6}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso}
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY in .env}
+      SCRAPER_CHROMIUM_PATH: /usr/bin/chromium
+      WAISO_API_URL: http://api:3000
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    shm_size: 1gb
+    networks: [core, integrations]
+
+  # ─── Editor service ──────────────────────────────────────────────────────────
+  # Completions and diagnostics in the code editor. Everything else works
+  # without it; the editor just stops suggesting.
+  lsp:
+    image: ghcr.io/talissonjunior16/waiso-lsp:${WAISO_VERSION:-1.3.6}
+    restart: unless-stopped
+    environment:
+      PORT: 3001
+    ports:
+      - "${WAISO_LSP_PORT:-3001}:3001"
+    networks: [core]
+
+networks:
+  core:
+  # Scripts run here, with no route out.
+  sandbox:
+    internal: true
+  # The workers (for SQL, e-mail and S3 — never the scripts themselves) and the
+  # scraper engine reach the internet from here.
+  integrations:
+
+volumes:
+  pgdata:
+  native_cache:
