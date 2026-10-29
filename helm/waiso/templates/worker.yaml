@@ -1,0 +1,105 @@
+{{/*
+The worker runs your scripts. With isolationLevel "sandbox" (the default) its pod
+needs extra capabilities, which a namespace enforcing PodSecurity "restricted"
+refuses — see values.yaml. It has no Service: nothing ever dials a worker.
+*/}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "waiso.fullname" . }}-worker
+  labels:
+    {{- include "waiso.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "waiso.selector" (dict "ctx" $ "component" "worker") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "waiso.selector" (dict "ctx" $ "component" "worker") | nindent 8 }}
+      {{- with .Values.worker.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "waiso.serviceAccountName" . }}
+      {{- include "waiso.imagePullSecrets" . | nindent 6 }}
+      # Lets an in-flight script finish before the pod goes.
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: {{ include "waiso.image" (dict "ctx" $ "component" "worker" "svc" .Values.worker) }}
+          imagePullPolicy: {{ .Values.global.imagePullPolicy }}
+          env:
+            {{- include "waiso.commonEnv" . | nindent 12 }}
+            # The AI step asks the API's model relay.
+            {{- include "waiso.scraperSecretEnv" . | nindent 12 }}
+            - name: WAISO_API_URL
+              value: {{ printf "http://%s-api:%v" (include "waiso.fullname" .) .Values.api.service.port | quote }}
+            # The public addresses approval links (waiso.resume_urls) point at.
+            - name: WAISO_PUBLIC_API_URL
+              value: {{ include "waiso.publicUrl" (dict "ctx" $ "svc" "api" "scheme" "http" "port" .Values.api.service.port) | quote }}
+            - name: FRONTEND_URL
+              value: {{ include "waiso.publicUrl" (dict "ctx" $ "svc" "ui" "scheme" "http" "port" .Values.ui.service.port) | quote }}
+            - name: WORKER_POOL
+              value: default
+            - name: WORKER_CONCURRENCY
+              value: {{ .Values.worker.concurrency | quote }}
+            - name: WORKER_LANGUAGES
+              value: {{ .Values.worker.languages | quote }}
+            # SQL runs here. `default dict` keeps `helm upgrade
+            # --reuse-values` from an older chart (no worker.sql) rendering, and
+            # carries an old sqlWorker.allowPrivateHosts over.
+            - name: WORKER_SQL_CONCURRENCY
+              value: {{ (.Values.worker.sql | default dict).concurrency | default 4 | quote }}
+            - name: SQL_POOL_MAX_PER_INTEGRATION
+              value: {{ (.Values.worker.sql | default dict).poolMaxPerIntegration | default 4 | quote }}
+            - name: SQL_ALLOW_PRIVATE_HOSTS
+              value: {{ include "waiso.sqlAllowPrivateHosts" . | quote }}
+            # Most tunnels to private databases (SSH, Tailscale, WireGuard,
+            # proxies) one worker keeps open at once.
+            - name: SQL_WORKER_MAX_TUNNELS
+              value: {{ (.Values.worker.sql | default dict).maxTunnels | default 12 | quote }}
+            - name: OUTBOUND_ALLOW_PRIVATE_HOSTS
+              value: {{ .Values.worker.outboundAllowPrivateHosts | default "" | quote }}
+            # Keep in step with the container memory limit.
+            - name: MEM_LIMIT_MB
+              value: {{ .Values.worker.memLimitMb | quote }}
+            - name: ISOLATION_LEVEL
+              value: {{ .Values.worker.isolationLevel | quote }}
+            {{- if .Values.worker.nativeCache.enabled }}
+            - name: WAISO_NATIVE_CACHE_DIR
+              value: /var/cache/waiso/native
+            {{- end }}
+          {{- if ne .Values.worker.isolationLevel "none" }}
+          securityContext:
+            capabilities:
+              add: [SYS_ADMIN, NET_ADMIN]
+            seccompProfile:
+              type: Unconfined
+            {{- with .Values.worker.appArmorProfile }}
+            appArmorProfile:
+              type: Localhost
+              localhostProfile: {{ . | quote }}
+            {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.worker.resources | nindent 12 }}
+          {{- if .Values.worker.nativeCache.enabled }}
+          volumeMounts:
+            - name: native-cache
+              mountPath: /var/cache/waiso/native
+          {{- end }}
+      {{- if .Values.worker.nativeCache.enabled }}
+      volumes:
+        - name: native-cache
+          {{- if .Values.worker.nativeCache.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.worker.nativeCache.existingClaim }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- end }}
+      {{- include "waiso.scheduling" .Values.worker | nindent 6 }}
