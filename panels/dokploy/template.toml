@@ -1,0 +1,38 @@
+# Waiso for Dokploy: three addresses (web app, API, editor service) and the secrets, generated at install.
+[variables]
+ui_domain = "${domain}"
+api_domain = "${domain}"
+lsp_domain = "${domain}"
+postgres_password = "${password:32}"
+credentials_key = "${hash:64}"
+engine_secret = "${password:48}"
+
+[config]
+[[config.domains]]
+serviceName = "ui"
+port = 8080
+host = "${ui_domain}"
+
+[[config.domains]]
+serviceName = "api"
+port = 3000
+host = "${api_domain}"
+
+[[config.domains]]
+serviceName = "lsp"
+port = 3001
+host = "${lsp_domain}"
+
+[config.env]
+# Full public addresses. The generated domains answer over plain HTTP; once you turn on HTTPS for them in
+# Dokploy, change http:// to https:// and ws:// to wss:// here and redeploy.
+UI_URL = "http://${ui_domain}"
+API_URL = "http://${api_domain}"
+LSP_URL = "ws://${lsp_domain}"
+POSTGRES_PASSWORD = "${postgres_password}"
+DB_CREDENTIALS_KEY = "${credentials_key}"
+SCRAPER_ENGINE_SECRET = "${engine_secret}"
+# Apps are published under *.<this domain> when set (point a wildcard DNS record at the server).
+WAISO_APPS_DOMAIN = ""
+# Set to off to stop the check for new versions.
+WAISO_UPDATE_CHECK = "on"
