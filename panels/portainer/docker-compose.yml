@@ -1,0 +1,116 @@
+# Waiso for Portainer (Stacks → Add stack, or the Waiso app template). The version below is rewritten by every release.
+#
+# Portainer does not make passwords or addresses, so you fill in the variables when you deploy:
+#   POSTGRES_PASSWORD      openssl rand -hex 32
+#   DB_CREDENTIALS_KEY     openssl rand -base64 32
+#   SCRAPER_ENGINE_SECRET  openssl rand -hex 32
+#   UI_URL / API_URL / LSP_URL   where browsers reach the three ports below, e.g. http://203.0.113.10:8080,
+#                          http://203.0.113.10:3000 and ws://203.0.113.10:3001 (https/wss behind your own proxy).
+# The first account created becomes the Admin.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: waiso
+      POSTGRES_USER: waiso
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waiso -d waiso"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ui:
+    image: ghcr.io/talissonjunior16/waiso-ui:1.8.2
+    restart: unless-stopped
+    environment:
+      WAISO_PUBLIC_API_URL: ${API_URL:-http://localhost:3000}
+      WAISO_PUBLIC_LSP_URL: ${LSP_URL:-ws://localhost:3001}
+      WAISO_INTERNAL_API_URL: http://api:3000
+      WAISO_APPS_DOMAIN: ${WAISO_APPS_DOMAIN:-}
+    ports:
+      - "${UI_PORT:-8080}:8080"
+    depends_on: [api]
+
+  api:
+    image: ghcr.io/talissonjunior16/waiso-api:1.8.2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso
+      PORT: "3000"
+      WAISO_VERSION: "1.8.2"
+      WAISO_UPDATE_CHECK: ${WAISO_UPDATE_CHECK:-on}
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY}
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET}
+      FRONTEND_URL: ${UI_URL:-http://localhost:8080}
+      WAISO_PUBLIC_LSP_URL: ${LSP_URL:-ws://localhost:3001}
+      WAISO_PUBLIC_API_URL: ${API_URL:-http://localhost:3000}
+      WAISO_APPS_DOMAIN: ${WAISO_APPS_DOMAIN:-}
+      WAISO_SITES_DIR: /data/sites
+    volumes:
+      - sites:/data/sites
+    ports:
+      - "${API_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/talissonjunior16/waiso-worker:1.8.2
+    restart: unless-stopped
+    init: true
+    environment:
+      DATABASE_URL: postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY}
+      WORKER_POOL: default
+      WAISO_PUBLIC_API_URL: ${API_URL:-http://localhost:3000}
+      FRONTEND_URL: ${UI_URL:-http://localhost:8080}
+      WORKER_CONCURRENCY: "12"
+      MEM_LIMIT_MB: "2048"
+      ISOLATION_LEVEL: sandbox
+      WAISO_NATIVE_CACHE_DIR: /var/cache/waiso/native
+      WAISO_API_URL: http://api:3000
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET}
+    volumes:
+      - native_cache:/var/cache/waiso/native
+    # Each script runs in its own sandbox with no network; these let the worker build it.
+    # A stack cannot install the AppArmor profile the plain compose install uses, so AppArmor is left unconfined here.
+    cap_add: [SYS_ADMIN, NET_ADMIN]
+    security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
+    mem_limit: 2g
+    pids_limit: 512
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  scraper-engine:
+    image: ghcr.io/talissonjunior16/waiso-scraper-engine:1.8.2
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://waiso:${POSTGRES_PASSWORD}@postgres:5432/waiso
+      DB_CREDENTIALS_KEY: ${DB_CREDENTIALS_KEY:?set DB_CREDENTIALS_KEY}
+      SCRAPER_CHROMIUM_PATH: /usr/bin/chromium
+      WAISO_API_URL: http://api:3000
+      SCRAPER_ENGINE_SECRET: ${SCRAPER_ENGINE_SECRET:?set SCRAPER_ENGINE_SECRET}
+    cap_add: [NET_ADMIN]
+    shm_size: 1gb
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  lsp:
+    image: ghcr.io/talissonjunior16/waiso-lsp:1.8.2
+    restart: unless-stopped
+    environment:
+      PORT: "3001"
+      WAISO_API_URL: http://api:3000
+    ports:
+      - "${LSP_PORT:-3001}:3001"
+
+volumes:
+  pgdata:
+  native_cache:
+  sites:
