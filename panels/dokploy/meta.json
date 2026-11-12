@@ -1,0 +1,13 @@
+{
+  "id": "waiso",
+  "name": "Waiso",
+  "version": "1.8.3",
+  "description": "Run Python, TypeScript, Go and other scripts, chain them into flows, and call them on a schedule or as an API. Each run is kept with its inputs, output and logs.",
+  "logo": "waiso.svg",
+  "links": {
+    "github": "https://github.com/talissonjunior16/waiso",
+    "website": "https://waiso.dev",
+    "docs": "https://waiso.dev/docs/panel-dokploy"
+  },
+  "tags": ["automation", "workflow", "scripts", "self-hosted"]
+}
