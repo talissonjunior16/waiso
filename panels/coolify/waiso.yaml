@@ -1,0 +1,117 @@
+# documentation: https://waiso.dev/docs/panel-coolify
+# slogan: Run scripts and flows on a schedule or as an API, with every run kept.
+# category: automation
+# tags: automation, workflow, scripts, python, typescript, api
+# logo: svgs/waiso.svg
+# port: 8080
+#
+# Waiso for Coolify (New resource → "Docker Compose", the one without a Git repository; paste this file). The version below is rewritten by every release.
+# Coolify fills the SERVICE_* values: an address for the web app, the API and the editor service, and the secrets.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_DB=waiso
+      - POSTGRES_USER=waiso
+      - POSTGRES_PASSWORD=${SERVICE_PASSWORD_POSTGRES}
+    volumes:
+      - waiso-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U waiso -d waiso"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ui:
+    image: ghcr.io/talissonjunior16/waiso-ui:1.8.4
+    restart: unless-stopped
+    environment:
+      - SERVICE_URL_UI_8080
+      - WAISO_PUBLIC_API_URL=${SERVICE_URL_API}
+      - WAISO_PUBLIC_LSP_URL=${SERVICE_URL_LSP}
+      - WAISO_INTERNAL_API_URL=http://api:3000
+      - WAISO_APPS_DOMAIN=${WAISO_APPS_DOMAIN:-}
+    depends_on: [api]
+
+  api:
+    image: ghcr.io/talissonjunior16/waiso-api:1.8.4
+    restart: unless-stopped
+    environment:
+      - SERVICE_URL_API_3000
+      - DATABASE_URL=postgres://waiso:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/waiso
+      - PORT=3000
+      - WAISO_VERSION=1.8.4
+      - WAISO_UPDATE_CHECK=${WAISO_UPDATE_CHECK:-on}
+      - DB_CREDENTIALS_KEY=${SERVICE_REALBASE64_32_CREDENTIALS}
+      - SCRAPER_ENGINE_SECRET=${SERVICE_PASSWORD_64_ENGINE}
+      - FRONTEND_URL=${SERVICE_URL_UI}
+      - WAISO_PUBLIC_API_URL=${SERVICE_URL_API}
+      - WAISO_PUBLIC_LSP_URL=${SERVICE_URL_LSP}
+      - WAISO_APPS_DOMAIN=${WAISO_APPS_DOMAIN:-}
+      - WAISO_SITES_DIR=/data/sites
+    volumes:
+      - waiso-sites:/data/sites
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    image: ghcr.io/talissonjunior16/waiso-worker:1.8.4
+    restart: unless-stopped
+    init: true
+    environment:
+      - DATABASE_URL=postgres://waiso:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/waiso
+      - DB_CREDENTIALS_KEY=${SERVICE_REALBASE64_32_CREDENTIALS}
+      - WORKER_POOL=default
+      - WAISO_PUBLIC_API_URL=${SERVICE_URL_API}
+      - FRONTEND_URL=${SERVICE_URL_UI}
+      - WORKER_CONCURRENCY=12
+      - MEM_LIMIT_MB=2048
+      - ISOLATION_LEVEL=sandbox
+      - WAISO_NATIVE_CACHE_DIR=/var/cache/waiso/native
+      - WAISO_API_URL=http://api:3000
+      - SCRAPER_ENGINE_SECRET=${SERVICE_PASSWORD_64_ENGINE}
+    volumes:
+      - waiso-native-cache:/var/cache/waiso/native
+    # Each script runs in its own sandbox with no network; these let the worker build it. A panel cannot install
+    # the AppArmor profile the plain compose install uses, so AppArmor is left unconfined here.
+    cap_add: [SYS_ADMIN, NET_ADMIN]
+    security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
+    mem_limit: 2g
+    pids_limit: 512
+    depends_on:
+      postgres:
+        condition: service_healthy
+    exclude_from_hc: true
+
+  scraper-engine:
+    image: ghcr.io/talissonjunior16/waiso-scraper-engine:1.8.4
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgres://waiso:${SERVICE_PASSWORD_POSTGRES}@postgres:5432/waiso
+      - DB_CREDENTIALS_KEY=${SERVICE_REALBASE64_32_CREDENTIALS}
+      - SCRAPER_CHROMIUM_PATH=/usr/bin/chromium
+      - WAISO_API_URL=http://api:3000
+      - SCRAPER_ENGINE_SECRET=${SERVICE_PASSWORD_64_ENGINE}
+    cap_add: [NET_ADMIN]
+    shm_size: 1gb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    exclude_from_hc: true
+
+  lsp:
+    image: ghcr.io/talissonjunior16/waiso-lsp:1.8.4
+    restart: unless-stopped
+    environment:
+      - SERVICE_URL_LSP_3001
+      - PORT=3001
+      - WAISO_API_URL=http://api:3000
+    exclude_from_hc: true
+
+volumes:
+  waiso-pgdata:
+  waiso-sites:
+  waiso-native-cache:

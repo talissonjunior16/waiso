@@ -1,0 +1,26 @@
+{
+  "version": "3",
+  "templates": [
+    {
+      "type": 3,
+      "title": "Waiso",
+      "description": "Run scripts and flows on a schedule or as an API, with every run kept. Fill in the three secrets (openssl rand -hex 32, openssl rand -base64 32, openssl rand -hex 32) and the addresses browsers use to reach ports 8080, 3000 and 3001.",
+      "note": "The first account created becomes the Admin. To update, change the image tags in the stack to the new version and redeploy; your data stays in the volumes.",
+      "categories": ["automation", "development"],
+      "platform": "linux",
+      "logo": "https://raw.githubusercontent.com/talissonjunior16/waiso/main/panels/portainer/waiso.svg",
+      "repository": {
+        "url": "https://github.com/talissonjunior16/waiso",
+        "stackfile": "panels/portainer/docker-compose.yml"
+      },
+      "env": [
+        { "name": "POSTGRES_PASSWORD", "label": "Database password", "description": "openssl rand -hex 32" },
+        { "name": "DB_CREDENTIALS_KEY", "label": "Credentials key", "description": "openssl rand -base64 32 (keep it: it opens your saved credentials)" },
+        { "name": "SCRAPER_ENGINE_SECRET", "label": "Robot engine secret", "description": "openssl rand -hex 32" },
+        { "name": "UI_URL", "label": "Web app address", "default": "http://localhost:8080" },
+        { "name": "API_URL", "label": "API address", "default": "http://localhost:3000" },
+        { "name": "LSP_URL", "label": "Editor address (ws:// or wss://)", "default": "ws://localhost:3001" }
+      ]
+    }
+  ]
+}
