@@ -1,0 +1,21 @@
+{
+  "name": "waiso",
+  "version": "1.8.5",
+  "description": "Build and run Waiso scripts, flows, schedules, APIs and robots from Claude. Connects to your Waiso workspace over MCP.",
+  "author": {
+    "name": "Waiso",
+    "url": "https://waiso.dev"
+  },
+  "homepage": "https://waiso.dev/docs/claude",
+  "repository": "https://github.com/talissonjunior16/waiso",
+  "license": "MIT",
+  "keywords": [
+    "automation",
+    "scripts",
+    "workflows",
+    "scraping",
+    "mcp"
+  ],
+  "icon": ".claude-plugin/icon.png",
+  "privacyPolicyUrl": "https://waiso.dev/privacy"
+}
