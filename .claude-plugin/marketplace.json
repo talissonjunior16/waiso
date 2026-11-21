@@ -1,0 +1,15 @@
+{
+  "name": "waiso",
+  "description": "The Waiso plugin for Claude: scripts, flows, schedules, APIs and robots in your Waiso workspace.",
+  "owner": {
+    "name": "Waiso",
+    "url": "https://waiso.dev"
+  },
+  "plugins": [
+    {
+      "name": "waiso",
+      "source": "./claude",
+      "description": "Build and run Waiso scripts, flows, schedules, APIs and robots from Claude."
+    }
+  ]
+}
