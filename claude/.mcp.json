@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "waiso": {
+      "type": "http",
+      "url": "https://waiso.dev/mcp"
+    }
+  }
+}
