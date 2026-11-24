@@ -1,0 +1,5 @@
+# Nothing here belongs in a packaged chart.
+.git
+*.tgz
+ci/
+*.md
